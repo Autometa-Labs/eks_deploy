@@ -4,7 +4,7 @@ resource "aws_security_group_rule" "allow_internal_traffic_80" {
   from_port               = 80
   to_port                 = 80
   protocol                = "tcp"
-  cidr_blocks             = ["0.0.0.0/0", "0.0.0.0/0"]
+  cidr_blocks             = ["0.0.0.0/0"]
 }
 
 resource "aws_security_group_rule" "allow_internal_traffic_443" {
@@ -13,7 +13,7 @@ resource "aws_security_group_rule" "allow_internal_traffic_443" {
   from_port               = 443
   to_port                 = 443
   protocol                = "tcp"
-  cidr_blocks             = ["0.0.0.0/0", "0.0.0.0/0"]
+  cidr_blocks             = ["0.0.0.0/0"]
 }
 
 # resource "aws_security_group_rule" "allow_internal_traffic_9090" {
