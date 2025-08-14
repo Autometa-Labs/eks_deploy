@@ -1,19 +1,38 @@
 # =============================================
-# EKS Deployment — single apply, no -target
+# EKS Deployment
 # =============================================
 
 terraform {
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
-    http = { source = "hashicorp/http", version = "~> 3.4" }
-    null = { source = "hashicorp/null", version = "~> 3.2" }
-    time = { source = "hashicorp/time", version = "~> 0.11" }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.29"
+    }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.4"
+    }
   }
 }
 
 provider "aws" {
   region = var.region[0]
 }
+
+# -------------------------------------------------
+# Core data are in data.tf:
+# - data.aws_vpc.vpc
+# - data.aws_subnet.subnets[*]
+# - data.aws_ssm_parameter.eks_ami_release_version
+# -------------------------------------------------
 
 # ------------------------------
 # EKS Cluster module
@@ -44,8 +63,7 @@ module "nodegroup" {
   nodegroup_name                        = "${var.prefix}${each.value.ng_prefix}-nodegroup-${var.cluster_prefix}"
   node_role_name                        = "${var.prefix}${each.value.ng_prefix}-node-role-${var.cluster_prefix}"
   instance_type                         = each.value.instance_type
-#  ssm_parameter                         = local.ssm_parameter
-  ssm_parameter                         = null
+  ssm_parameter                         = local.ssm_parameter
   worker_node_policy                    = var.worker_node_policy
   cni_policy                            = var.cni_policy
   container_registry_read_only_policy   = var.container_registry_read_only_policy
@@ -64,7 +82,7 @@ module "ecr_registry" {
 }
 
 # ------------------------------
-# Subnet tags for ALB controller
+# Subnet tags for AWS Load Balancer Controller
 # ------------------------------
 resource "aws_ec2_tag" "cluster_shared" {
   count       = length(data.aws_subnet.subnets)
@@ -81,25 +99,26 @@ resource "aws_ec2_tag" "role_elb" {
 }
 
 # ------------------------------
-# IRSA + IAM for AWS Load Balancer Controller
-# (safe to create before cluster)
+# AWS Load Balancer Controller (IRSA + Helm)
 # ------------------------------
 
-# Get the official controller policy JSON
-data "http" "alb_policy" {
-  url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.13.3/docs/install/iam_policy.json"
+# Cluster connection details
+data "aws_eks_cluster" "this" {
+  name = module.eks_cluster.cluster_name
 }
 
-# OIDC provider for IRSA (requires cluster to exist; we create it AFTER the cluster is up)
+data "aws_eks_cluster_auth" "this" {
+  name = module.eks_cluster.cluster_name
+}
+
+# OIDC provider for IRSA
 resource "aws_iam_openid_connect_provider" "eks" {
-  url             = "https://oidc.eks.${var.region[0]}.amazonaws.com/id/${module.eks_cluster.cluster_id}" # use your module output if available; else swap to data source post-wait (see null_resource below)
+  url             = data.aws_eks_cluster.this.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da0ecd4e0c3"]
-
-  depends_on = [module.eks_cluster]
 }
 
-# Assume-role policy for the controller SA
+# Assume-role policy for the controller service account
 data "aws_iam_policy_document" "alb_sa_assume" {
   statement {
     effect  = "Allow"
@@ -124,11 +143,15 @@ data "aws_iam_policy_document" "alb_sa_assume" {
   }
 }
 
+# Pull official controller policy JSON (v2.13.3)
+data "http" "alb_policy" {
+  url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.13.3/docs/install/iam_policy.json"
+}
+
+# IAM role + policy for the controller
 resource "aws_iam_role" "alb_controller" {
   name               = "${var.prefix}lb-controller-${var.cluster_prefix}"
   assume_role_policy = data.aws_iam_policy_document.alb_sa_assume.json
-
-  depends_on = [aws_iam_openid_connect_provider.eks]
 }
 
 resource "aws_iam_policy" "alb_controller" {
@@ -141,69 +164,64 @@ resource "aws_iam_role_policy_attachment" "alb_attach" {
   policy_arn = aws_iam_policy.alb_controller.arn
 }
 
-# ------------------------------
-# Wait for cluster to be ACTIVE, then install ALB controller via Helm CLI
-# ------------------------------
-
-# Small backoff so the EKS API is reachable
-resource "time_sleep" "post_cluster_wait" {
-  create_duration = "60s"
-  depends_on      = [module.eks_cluster, module.nodegroup]
+# Providers for Kubernetes/Helm (use cluster data)
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
 }
 
-# Install using local-exec so we don't initialize Helm/K8s providers pre-cluster
-resource "null_resource" "install_alb_controller" {
-  depends_on = [
-    time_sleep.post_cluster_wait,
-    aws_iam_role.alb_controller,
-    aws_iam_role_policy_attachment.alb_attach,
-    aws_ec2_tag.cluster_shared,
-    aws_ec2_tag.role_elb
-  ]
-
-  # Re-run if policy/role change
-  triggers = {
-    role_arn   = aws_iam_role.alb_controller.arn
-    policy_sha = sha1(data.http.alb_policy.response_body)
-    cluster    = module.eks_cluster.cluster_name
-    region     = var.region[0]
-    vpc_id     = data.aws_vpc.vpc.id
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
-    command = <<-EOT
-      set -euo pipefail
-
-      # Ensure cluster is active
-      aws eks wait cluster-active --name "${module.eks_cluster.cluster_name}" --region "${var.region[0]}"
-
-      # Kubeconfig
-      aws eks update-kubeconfig --name "${module.eks_cluster.cluster_name}" --region "${var.region[0]}"
-
-      # Create SA with IRSA annotation
-      kubectl -n kube-system create serviceaccount aws-load-balancer-controller --dry-run=client -o yaml \
-        | kubectl apply -f -
-      kubectl -n kube-system annotate serviceaccount aws-load-balancer-controller \
-        eks.amazonaws.com/role-arn="${aws_iam_role.alb_controller.arn}" --overwrite
-
-      # Install/upgrade ALB Controller via Helm
-      helm repo add eks https://aws.github.io/eks-charts
-      helm repo update
-      helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-        -n kube-system \
-        --set clusterName="${module.eks_cluster.cluster_name}" \
-        --set region="${var.region[0]}" \
-        --set vpcId="${data.aws_vpc.vpc.id}" \
-        --set serviceAccount.create=false \
-        --set serviceAccount.name=aws-load-balancer-controller
-    EOT
+provider "helm" {
+  kubernetes {
+    host                   = data.aws_eks_cluster.this.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.this.token
   }
 }
 
-# =============================================
-# Your existing data sources (in data.tf)
-# =============================================
-# data "aws_vpc" "vpc" { tags = { Name = var.vpc_name } }
-# data "aws_subnet" "subnets" { ... }
-# data "aws_ssm_parameter" "eks_ami_release_version" { ... }
+# Service account annotated with IRSA
+resource "kubernetes_service_account" "alb_sa" {
+  metadata {
+    name      = "aws-load-balancer-controller"
+    namespace = "kube-system"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.alb_controller.arn
+    }
+  }
+}
+
+# Helm install of AWS Load Balancer Controller
+resource "helm_release" "aws_lb_controller" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+  depends_on = [kubernetes_service_account.alb_sa]
+
+  set {
+    name  = "clusterName"
+    value = module.eks_cluster.cluster_name
+  }
+
+  set {
+    name  = "region"
+    value = var.region[0]
+  }
+
+  set {
+    name  = "vpcId"
+    value = data.aws_vpc.vpc.id
+  }
+
+  set {
+    name  = "serviceAccount.create"
+    value = "false"
+  }
+
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+}
+
+# (Optional) Other modules you commented out remain unchanged below.

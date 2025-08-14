@@ -8,5 +8,5 @@ locals {
 
   ## Nodegroups
   eks_cluster_version = module.eks_cluster.eks_version
-  ssm_parameter = nonsensitive(data.aws_ssm_parameter.eks_ami_release_version.value)
+#  ssm_parameter = nonsensitive(data.aws_ssm_parameter.eks_ami_release_version.value)
 }

@@ -22,3 +22,13 @@ variable "nodegroups" {
     volume_size = string
   }))
 }
+
+variable "eks_version" {
+  description = "EKS Kubernetes version used for AMI lookups (e.g., 1.30 or 1.31)"
+  type        = string
+  default     = "1.30"
+  validation {
+    condition     = can(regex("^1\\.(2[7-9]|30|31)$", var.eks_version)) # allow 1.27–1.31
+    error_message = "Set eks_version to a supported minor like 1.29, 1.30, or 1.31."
+  }
+}

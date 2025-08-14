@@ -3,7 +3,7 @@
 # =============================================
 terraform {
   backend "s3" {
-    bucket  = "autometa-solutions"
+    bucket  = "collectalot-tf-state"
     key     = "dev-app-cluster/dev-app-01.tfstate"
     region  = "us-east-1"
   }

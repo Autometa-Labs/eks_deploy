@@ -1,8 +1,12 @@
 # =============================================
 # Data resources
 # =============================================
+#data "aws_ssm_parameter" "eks_ami_release_version" {
+#  name = "/aws/service/eks/optimized-ami/${local.eks_cluster_version}/amazon-linux-2/recommended/release_version"
+#}
+
 data "aws_ssm_parameter" "eks_ami_release_version" {
-  name = "/aws/service/eks/optimized-ami/${local.eks_cluster_version}/amazon-linux-2/recommended/release_version"
+  name = "/aws/service/eks/optimized-ami/${var.eks_version}/amazon-linux-2/recommended/release_version"
 }
 
 data "aws_vpc" "vpc" {
@@ -12,7 +16,7 @@ data "aws_vpc" "vpc" {
 }
 
 data "aws_subnet" "subnets" {
-    count = 3
+    count = 2
       tags = {
             Name = var.subnets[count.index]
       }
