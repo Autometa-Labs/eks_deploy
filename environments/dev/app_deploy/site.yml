@@ -25,7 +25,11 @@
     - role: ebs_csi_driver
       tags: ['ebs', 'storage', 'controllers', 'all']
     
-    # Step 4: Deploy Grafana with persistent storage
+    # Step 4: Deploy Prometheus monitoring stack
+    - role: prometheus
+      tags: ['prometheus', 'monitoring', 'all']
+    
+    # Step 5: Deploy Grafana with persistent storage
     - role: grafana
       tags: ['grafana', 'monitoring', 'all']
 
@@ -41,9 +45,11 @@
           - "Deployed Components:"
           - "✓ AWS Load Balancer Controller"
           - "✓ EBS CSI Driver with {{ storage_class }} storage class"
+          - "✓ Prometheus Stack with {{ prometheus_storage_size }} persistent storage"
           - "✓ Grafana with {{ grafana_storage_size }} persistent storage"
           - ""
           - "Next Steps:"
           - "1. Check ALB provisioning: kubectl get ingress -n {{ monitoring_namespace }}"
-          - "2. Access Grafana at the ALB URL when ready"
-          - "3. Login with admin / {{ grafana_admin_password }}"
+          - "2. Access Prometheus and Grafana at their ALB URLs when ready"
+          - "3. Login to Grafana with admin / {{ grafana_admin_password }}"
+          - "4. Prometheus will be automatically configured as Grafana data source"

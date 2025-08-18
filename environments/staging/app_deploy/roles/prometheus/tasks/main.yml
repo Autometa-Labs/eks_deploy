@@ -1,0 +1,246 @@
+---
+# =============================================
+# Prometheus Deployment Role
+# Uses discovered AWS resources from aws_discovery role
+# =============================================
+
+- name: Add Prometheus Community Helm repository
+  kubernetes.core.helm_repository:
+    name: "{{ prometheus_repo_name }}"
+    repo_url: "{{ prometheus_repo_url }}"
+  tags: ['prometheus']
+
+- name: Update Helm repositories
+  kubernetes.core.helm:
+    name: dummy
+    chart_ref: dummy
+    release_namespace: dummy
+    state: absent
+    update_repo_cache: true
+  tags: ['prometheus']
+
+- name: Deploy Prometheus via Helm (kube-prometheus-stack)
+  kubernetes.core.helm:
+    name: prometheus
+    chart_ref: "{{ prometheus_repo_name }}/kube-prometheus-stack"
+    release_namespace: "{{ monitoring_namespace }}"
+    create_namespace: true
+    values:
+      # Prometheus configuration
+      prometheus:
+        prometheusSpec:
+          storageSpec:
+            volumeClaimTemplate:
+              spec:
+                storageClassName: "{{ storage_class }}"
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: "{{ prometheus_storage_size }}"
+          retention: "{{ prometheus_retention }}"
+          retentionSize: "{{ prometheus_retention_size }}"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          serviceMonitorSelectorNilUsesHelmValues: false
+          podMonitorSelectorNilUsesHelmValues: false
+          ruleSelectorNilUsesHelmValues: false
+          serviceMonitorSelector: {}
+          podMonitorSelector: {}
+          ruleSelector: {}
+        service:
+          type: ClusterIP
+          port: 9090
+      
+      # AlertManager configuration
+      alertmanager:
+        alertmanagerSpec:
+          storage:
+            volumeClaimTemplate:
+              spec:
+                storageClassName: "{{ storage_class }}"
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: "{{ alertmanager_storage_size }}"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+        service:
+          type: ClusterIP
+          port: 9093
+      
+      # Grafana integration (disable since we have separate Grafana)
+      grafana:
+        enabled: false
+      
+      # Node Exporter configuration
+      nodeExporter:
+        enabled: true
+      
+      # Kube State Metrics configuration
+      kubeStateMetrics:
+        enabled: true
+      
+      # Prometheus Operator configuration
+      prometheusOperator:
+        enabled: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+    state: present
+    wait: true
+    timeout: "15m0s"
+  tags: ['prometheus']
+
+- name: Wait for Prometheus pods to be ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ monitoring_namespace }}"
+    label_selectors:
+      - app.kubernetes.io/name=prometheus
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 300
+  tags: ['prometheus']
+
+- name: Create Prometheus ingress for ALB
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: prometheus-ingress
+        namespace: "{{ monitoring_namespace }}"
+        annotations:
+          kubernetes.io/ingress.class: alb
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+          alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+          alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+          alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+          alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+          alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+      spec:
+        rules:
+          - http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: prometheus-kube-prometheus-prometheus
+                      port:
+                        number: 9090
+    state: present
+  tags: ['prometheus']
+
+- name: Create AlertManager ingress for ALB
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: alertmanager-ingress
+        namespace: "{{ monitoring_namespace }}"
+        annotations:
+          kubernetes.io/ingress.class: alb
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+          alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+          alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+          alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+          alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+          alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+      spec:
+        rules:
+          - http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: prometheus-kube-prometheus-alertmanager
+                      port:
+                        number: 9093
+    state: present
+  tags: ['prometheus']
+
+- name: Wait for Prometheus ALB to be provisioned
+  kubernetes.core.k8s_info:
+    api_version: networking.k8s.io/v1
+    kind: Ingress
+    name: prometheus-ingress
+    namespace: "{{ monitoring_namespace }}"
+  register: prometheus_ingress
+  until: prometheus_ingress.resources[0].status.loadBalancer.ingress is defined
+  retries: 20
+  delay: 30
+  tags: ['prometheus']
+
+- name: Wait for AlertManager ALB to be provisioned
+  kubernetes.core.k8s_info:
+    api_version: networking.k8s.io/v1
+    kind: Ingress
+    name: alertmanager-ingress
+    namespace: "{{ monitoring_namespace }}"
+  register: alertmanager_ingress
+  until: alertmanager_ingress.resources[0].status.loadBalancer.ingress is defined
+  retries: 20
+  delay: 30
+  tags: ['prometheus']
+
+- name: Get Prometheus ALB URL
+  set_fact:
+    prometheus_alb_url: "{{ prometheus_ingress.resources[0].status.loadBalancer.ingress[0].hostname }}"
+  when: prometheus_ingress.resources[0].status.loadBalancer.ingress is defined
+  tags: ['prometheus']
+
+- name: Get AlertManager ALB URL
+  set_fact:
+    alertmanager_alb_url: "{{ alertmanager_ingress.resources[0].status.loadBalancer.ingress[0].hostname }}"
+  when: alertmanager_ingress.resources[0].status.loadBalancer.ingress is defined
+  tags: ['prometheus']
+
+- name: Verify Prometheus pods are running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ monitoring_namespace }}"
+    label_selectors:
+      - app.kubernetes.io/name=prometheus
+  register: prometheus_pods
+  tags: ['prometheus']
+
+- name: Display Prometheus deployment status
+  debug:
+    msg:
+      - "Prometheus Stack deployed successfully!"
+      - "Prometheus pods running: {{ prometheus_pods.resources | length }}"
+      - "Prometheus URL: http://{{ prometheus_alb_url | default('ALB still provisioning...') }}"
+      - "AlertManager URL: http://{{ alertmanager_alb_url | default('ALB still provisioning...') }}"
+      - "Storage: {{ prometheus_storage_size }} (Prometheus), {{ alertmanager_storage_size }} (AlertManager)"
+      - "Retention: {{ prometheus_retention }}"
+  tags: ['prometheus']
+
+- name: Verify Prometheus is ready
+  fail:
+    msg: "Prometheus pods are not running properly"
+  when: prometheus_pods.resources | length == 0
+  tags: ['prometheus']

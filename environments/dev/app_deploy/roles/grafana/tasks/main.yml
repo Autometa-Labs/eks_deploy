@@ -45,7 +45,7 @@
           datasources:
             - name: Prometheus
               type: prometheus
-              url: http://prometheus-server.monitoring.svc.cluster.local
+              url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
               access: proxy
               isDefault: true
     state: present
@@ -119,12 +119,26 @@
     grafana_alb_url: "{{ grafana_ingress.resources[0].status.loadBalancer.ingress[0].hostname }}"
   when: grafana_ingress.resources[0].status.loadBalancer.ingress is defined
 
+- name: Update Grafana CNAME record in Route53
+  amazon.aws.route53:
+    state: present
+    zone: "{{ dns_domain }}"
+    record: "{{ grafana_dns_name }}"
+    type: CNAME
+    value: "{{ grafana_alb_url }}"
+    ttl: 300
+    wait: true
+    wait_timeout: 300
+  when: grafana_alb_url is defined
+  tags: ['grafana']
+
 - name: Display Grafana deployment status
   debug:
     msg:
       - "Grafana deployed successfully!"
       - "Pods running: {{ grafana_pods.resources | length }}"
       - "ALB URL: http://{{ grafana_alb_url | default('ALB still provisioning...') }}"
+      - "DNS URL: http://{{ grafana_dns_name | default('DNS not configured') }}"
       - "Default login: admin / {{ grafana_admin_password }}"
 
 - name: Verify Grafana is ready
