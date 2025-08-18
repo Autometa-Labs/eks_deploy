@@ -1,0 +1,298 @@
+---
+# =============================================
+# Application Destruction Playbook - STAGING Environment
+# Safely removes all Kubernetes applications and resources
+# =============================================
+
+- name: Destroy Kubernetes Applications from EKS Cluster
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  
+  vars_files:
+    - env.yml
+  
+  tasks:
+    - name: Load environment configuration
+      include_vars: "{{ playbook_dir }}/env.yml"
+
+    - name: Display destruction warning
+      debug:
+        msg:
+          - "⚠️  WARNING: This will destroy selected applications in {{ environment }} environment"
+          - "Cluster: {{ cluster_name }}"
+          - "Region: {{ aws_region }}"
+          - ""
+          - "Available tags for selective destruction:"
+          - "- grafana: Grafana monitoring stack"
+          - "- alb: AWS Load Balancer Controller"
+          - "- storage: EBS CSI Driver and storage classes"
+          - "- all: All applications and resources"
+          - ""
+          - "Usage examples:"
+          - "ansible-playbook app_destroy.yml --tags grafana"
+          - "ansible-playbook app_destroy.yml --tags alb,storage"
+          - "ansible-playbook app_destroy.yml --tags all"
+          - "ansible-playbook app_destroy.yml (destroys everything)"
+
+    - name: Update kubeconfig for cluster
+      shell: |
+        aws eks update-kubeconfig --name "{{ cluster_name }}" --region "{{ aws_region }}"
+      changed_when: true
+      tags: ['always']
+
+    # Step 1: Remove Grafana and its resources
+    - name: Remove Grafana ingress (triggers ALB deletion)
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: grafana-ingress
+        namespace: "{{ monitoring_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300
+      tags: ['grafana']
+
+    - name: Wait for Grafana ALB to be deleted
+      pause:
+        seconds: 60
+        prompt: "Waiting for Grafana ALB to be deleted..."
+      tags: ['grafana']
+
+    - name: Uninstall Grafana Helm release
+      kubernetes.core.helm:
+        name: grafana
+        release_namespace: "{{ monitoring_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300
+      tags: ['grafana']
+
+    - name: Remove Grafana PVC (this will delete the EBS volume)
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+        state: absent
+        label_selectors:
+          - app.kubernetes.io/name=grafana
+      tags: ['grafana']
+
+    - name: Wait for Grafana PVC deletion
+      pause:
+        seconds: 30
+        prompt: "Waiting for Grafana PVC and EBS volumes to be deleted..."
+      tags: ['grafana']
+
+    # Step 2: Remove AWS Load Balancer Controller
+    - name: Clean up ALB target groups before removing controller
+      shell: |
+        echo "Cleaning up ALB target groups..."
+        aws elbv2 describe-target-groups --region "{{ aws_region }}" \
+          --query 'TargetGroups[?contains(TargetGroupName, `k8s-`)].TargetGroupArn' \
+          --output text | while read -r tg_arn; do
+          if [ ! -z "$tg_arn" ]; then
+            echo "Deleting target group: $tg_arn"
+            aws elbv2 delete-target-group --target-group-arn "$tg_arn" --region "{{ aws_region }}" || true
+          fi
+        done
+      register: target_group_cleanup
+      changed_when: true
+      tags: ['alb']
+
+    - name: Wait for target groups to be deleted
+      pause:
+        seconds: 30
+        prompt: "Waiting for ALB target groups to be deleted..."
+      tags: ['alb']
+
+    - name: Uninstall AWS Load Balancer Controller Helm release
+      kubernetes.core.helm:
+        name: aws-load-balancer-controller
+        release_namespace: "{{ kube_system_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300
+      tags: ['alb']
+
+    - name: Remove ALB controller service account
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: ServiceAccount
+        name: aws-load-balancer-controller
+        namespace: "{{ kube_system_namespace }}"
+        state: absent
+      tags: ['alb']
+
+    # Step 3: Remove EBS CSI Driver add-on
+    - name: Remove EBS CSI Driver add-on
+      shell: |
+        aws eks delete-addon \
+          --cluster-name "{{ cluster_name }}" \
+          --addon-name aws-ebs-csi-driver \
+          --region "{{ aws_region }}" || echo "Add-on may not exist or already deleted"
+      register: ebs_addon_result
+      changed_when: "'ResourceNotFoundException' not in ebs_addon_result.stderr"
+      tags: ['storage']
+
+    - name: Wait for EBS CSI Driver add-on deletion
+      shell: |
+        aws eks wait addon-deleted \
+          --cluster-name "{{ cluster_name }}" \
+          --addon-name aws-ebs-csi-driver \
+          --region "{{ aws_region }}" || echo "Add-on deletion completed or not found"
+      when: "'ResourceNotFoundException' not in ebs_addon_result.stderr"
+      tags: ['storage']
+
+    # Step 4: Remove custom storage class and clean up EBS volumes
+    - name: Get all PVCs before cleanup
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+      register: all_pvcs
+      tags: ['storage']
+
+    - name: Remove all PVCs to trigger EBS volume deletion
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ item.metadata.namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300
+      loop: "{{ all_pvcs.resources }}"
+      when: all_pvcs.resources | length > 0
+      tags: ['storage']
+
+    - name: Wait for PVC deletion to complete
+      pause:
+        seconds: 60
+        prompt: "Waiting for PVCs and associated EBS volumes to be deleted..."
+      when: all_pvcs.resources | length > 0
+      tags: ['storage']
+
+    - name: Clean up orphaned EBS volumes
+      shell: |
+        echo "Cleaning up orphaned EBS volumes..."
+        aws ec2 describe-volumes --region "{{ aws_region }}" \
+          --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned" \
+          --query 'Volumes[?State==`available`].VolumeId' \
+          --output text | while read -r volume_id; do
+          if [ ! -z "$volume_id" ]; then
+            echo "Deleting orphaned EBS volume: $volume_id"
+            aws ec2 delete-volume --volume-id "$volume_id" --region "{{ aws_region }}" || true
+          fi
+        done
+      register: ebs_cleanup
+      changed_when: true
+      tags: ['storage']
+
+    - name: Remove custom storage class
+      kubernetes.core.k8s:
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: "{{ storage_class }}"
+        state: absent
+      tags: ['storage']
+
+    # Step 5: Clean up any remaining ALBs
+    - name: Clean up any remaining ALBs created by ingress controller
+      shell: |
+        echo "Cleaning up any remaining ALBs..."
+        aws elbv2 describe-load-balancers --region "{{ aws_region }}" \
+          --query 'LoadBalancers[?contains(LoadBalancerName, `k8s-`)].LoadBalancerArn' \
+          --output text | while read -r alb_arn; do
+          if [ ! -z "$alb_arn" ]; then
+            echo "Deleting ALB: $alb_arn"
+            aws elbv2 delete-load-balancer --load-balancer-arn "$alb_arn" --region "{{ aws_region }}" || true
+          fi
+        done
+      register: alb_cleanup
+      changed_when: true
+      tags: ['all']
+
+    # Step 6: Remove monitoring namespace if empty
+    - name: Check if monitoring namespace has any remaining resources
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ monitoring_namespace }}"
+      register: monitoring_pods
+      tags: ['grafana', 'all']
+
+    - name: Remove monitoring namespace if empty
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ monitoring_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 120
+      when: monitoring_pods.resources | length == 0
+      tags: ['grafana', 'all']
+
+    # Step 7: Verification
+    - name: Verify Helm releases are removed
+      shell: helm list -A
+      register: helm_releases
+      changed_when: false
+      tags: ['always']
+
+    - name: Verify no ALBs remain
+      shell: |
+        aws elbv2 describe-load-balancers --region "{{ aws_region }}" \
+          --query 'LoadBalancers[?contains(LoadBalancerName, `k8s-`)].LoadBalancerName' \
+          --output text
+      register: remaining_albs
+      changed_when: false
+      tags: ['always']
+
+    - name: Verify no target groups remain
+      shell: |
+        aws elbv2 describe-target-groups --region "{{ aws_region }}" \
+          --query 'TargetGroups[?contains(TargetGroupName, `k8s-`)].TargetGroupName' \
+          --output text
+      register: remaining_target_groups
+      changed_when: false
+      tags: ['always']
+
+    - name: Verify no orphaned EBS volumes remain
+      shell: |
+        aws ec2 describe-volumes --region "{{ aws_region }}" \
+          --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned" \
+          --query 'Volumes[?State==`available`].VolumeId' \
+          --output text
+      register: remaining_volumes
+      changed_when: false
+      tags: ['always']
+
+    - name: Display destruction summary
+      debug:
+        msg:
+          - "=== Selective Destruction Complete ==="
+          - "Environment: {{ environment }}"
+          - "Cluster: {{ cluster_name }}"
+          - "Tags executed: {{ ansible_run_tags | default(['all']) | join(', ') }}"
+          - ""
+          - "Remaining Helm releases:"
+          - "{{ helm_releases.stdout_lines | default(['None']) }}"
+          - ""
+          - "Remaining ALBs:"
+          - "{{ remaining_albs.stdout | default('None') }}"
+          - ""
+          - "Remaining Target Groups:"
+          - "{{ remaining_target_groups.stdout | default('None') }}"
+          - ""
+          - "Remaining EBS Volumes:"
+          - "{{ remaining_volumes.stdout | default('None') }}"
+          - ""
+          - "⚠️  Note: Infrastructure (EKS cluster, IAM roles) remains intact"
+          - "Use 'terraform destroy' in infra_deploy/ to remove infrastructure"
+      tags: ['always']
+
+  handlers:
+    - name: Wait for resource cleanup
+      pause:
+        seconds: 30
