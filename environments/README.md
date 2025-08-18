@@ -202,17 +202,6 @@ ansible-playbook app_destroy.yml --tags all
 ansible-playbook app_destroy.yml
 ```
 
-### Complete Environment Destruction
-```bash
-# 1. First destroy applications
-cd environments/dev/app_deploy
-ansible-playbook app_destroy.yml --tags all
-
-# 2. Then destroy infrastructure
-cd ../infra_deploy
-terraform destroy
-```
-
 ### Available Destruction Tags
 
 | Tag | Components Destroyed |
