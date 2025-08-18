@@ -131,7 +131,10 @@ Each environment is configured through simple files:
 ### Applications (Ansible)
 - ✅ AWS Load Balancer Controller
 - ✅ EBS CSI Driver with gp3 storage class
+- ✅ Prometheus Stack (kube-prometheus-stack) with persistent storage
 - ✅ Grafana with persistent storage and ALB ingress
+- ✅ AlertManager with persistent storage and ALB ingress
+- ✅ Route53 DNS integration for all monitoring services
 
 ## AWS Resource Discovery
 
@@ -155,7 +158,13 @@ ansible-playbook site.yml --tags alb
 # Deploy only storage components
 ansible-playbook site.yml --tags storage
 
-# Deploy only monitoring
+# Deploy only monitoring stack
+ansible-playbook site.yml --tags prometheus,grafana
+
+# Deploy only Prometheus
+ansible-playbook site.yml --tags prometheus
+
+# Deploy only Grafana
 ansible-playbook site.yml --tags grafana
 ```
 
@@ -178,8 +187,11 @@ Each environment includes an `app_destroy.yml` playbook with **enhanced selectiv
 
 ### Selective Destruction (Individual Components)
 ```bash
-# Destroy only Grafana (includes PVCs and EBS volumes)
+# Destroy only Prometheus Stack (includes Prometheus + AlertManager)
 cd environments/dev/app_deploy
+ansible-playbook app_destroy.yml --tags prometheus
+
+# Destroy only Grafana (includes PVCs and EBS volumes)
 ansible-playbook app_destroy.yml --tags grafana
 
 # Destroy only ALB controller (includes target group cleanup)
@@ -187,6 +199,9 @@ ansible-playbook app_destroy.yml --tags alb
 
 # Destroy only storage components (includes orphaned EBS volumes)
 ansible-playbook app_destroy.yml --tags storage
+
+# Destroy monitoring stack together
+ansible-playbook app_destroy.yml --tags prometheus,grafana
 
 # Destroy ALB controller and storage together
 ansible-playbook app_destroy.yml --tags alb,storage
@@ -206,6 +221,7 @@ ansible-playbook app_destroy.yml
 
 | Tag | Components Destroyed |
 |-----|---------------------|
+| `prometheus` | Prometheus Stack (Prometheus + AlertManager), ingresses, PVCs, EBS volumes |
 | `grafana` | Grafana Helm release, ingress, PVCs, EBS volumes, namespace cleanup |
 | `alb` | AWS Load Balancer Controller, service accounts, target group cleanup |
 | `storage` | EBS CSI Driver add-on, storage classes, orphaned EBS volume cleanup |
@@ -249,16 +265,49 @@ Each destruction run includes comprehensive verification:
 
 ## Accessing Applications
 
-### Grafana
-After deployment, Grafana will be accessible via ALB:
-```bash
-# Get ALB URL
-kubectl get ingress grafana-ingress -n monitoring
+### Complete Monitoring Stack
+The deployment includes a full monitoring stack with Route53 DNS integration:
 
-# Default credentials
-Username: admin
-Password: admin123 (configurable in env.yml)
+#### Grafana Dashboard
+- **DNS URL**: http://grafana.collectalot.io
+- **ALB URL**: Available via `kubectl get ingress grafana-ingress -n monitoring`
+- **Credentials**: admin / admin123 (configurable in env.yml)
+- **Features**: Pre-configured Prometheus data source, persistent storage
+
+#### Prometheus Metrics
+- **DNS URL**: http://prometheus.collectalot.io
+- **ALB URL**: Available via `kubectl get ingress prometheus-ingress -n monitoring`
+- **Features**: 15-day retention, 50Gi persistent storage, service discovery
+
+#### AlertManager
+- **DNS URL**: http://alertmanager.collectalot.io
+- **ALB URL**: Available via `kubectl get ingress alertmanager-ingress -n monitoring`
+- **Features**: 10Gi persistent storage, alert routing and notification
+
+### Route53 DNS Integration
+All monitoring services automatically get DNS records in Route53:
+- Zone: `collectalot.io` (Z02467093QT0UOKUO4CKO)
+- Records are automatically updated when ALB hostnames change
+- 300-second TTL for fast DNS propagation
+
+### Security Notes
+- **Grafana**: Protected with built-in authentication
+- **Prometheus & AlertManager**: Currently publicly accessible via ALB
+- For production, consider implementing:
+  - AWS Cognito integration with ALB
+  - Network-level restrictions (security groups/NACLs)
+  - NGINX ingress controller with basic auth
+  - VPN access requirements
+
+### Dependency Installation
+Before running Ansible playbooks, install required Python dependencies:
+
+```bash
+# Install dependencies (run once per machine)
+ansible-playbook setup-dependencies.yml
 ```
+
+This installs: boto3, botocore, passlib, bcrypt for AWS and authentication modules.
 
 ## Troubleshooting
 
