@@ -1,0 +1,69 @@
+---
+# =============================================
+# Dependency Installation Playbook for macOS
+# Installs required Python packages for Ansible AWS modules
+# =============================================
+
+- name: Install Python Dependencies for Ansible AWS Modules
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    
+  tasks:
+    - name: Display Python interpreter being used
+      debug:
+        msg: "Using Python interpreter: {{ ansible_python_interpreter }}"
+    
+    - name: Check if pip is available
+      command: "{{ ansible_python_interpreter }} -m pip --version"
+      register: pip_check
+      changed_when: false
+      failed_when: false
+    
+    - name: Install pip if not available
+      command: "{{ ansible_python_interpreter }} -m ensurepip --upgrade"
+      when: pip_check.rc != 0
+    
+    - name: Install required Python packages
+      pip:
+        name:
+          - boto3
+          - botocore
+          - passlib
+          - bcrypt
+        executable: pip
+        extra_args: --user
+        state: present
+      register: pip_install_result
+    
+    - name: Display installation results
+      debug:
+        msg:
+          - "=== Python Dependencies Installation Complete ==="
+          - "Python interpreter: {{ ansible_python_interpreter }}"
+          - "Installed packages:"
+          - "  - boto3 (AWS SDK)"
+          - "  - botocore (AWS SDK core)"
+          - "  - passlib (password hashing)"
+          - "  - bcrypt (encryption backend)"
+          - ""
+          - "You can now run Ansible playbooks that use AWS modules!"
+    
+    - name: Verify installations
+      command: "{{ ansible_python_interpreter }} -c 'import {{ item }}; print(\"{{ item }} imported successfully\")'"
+      loop:
+        - boto3
+        - botocore
+        - passlib
+        - bcrypt
+      register: import_tests
+      changed_when: false
+    
+    - name: Display verification results
+      debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ import_tests.results }}"
+      when: item.rc == 0

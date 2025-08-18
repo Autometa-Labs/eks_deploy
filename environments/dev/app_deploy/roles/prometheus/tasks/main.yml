@@ -19,6 +19,10 @@
     update_repo_cache: true
   tags: ['prometheus']
 
+# Note: ALB ingress controller doesn't support basic auth annotations
+# Authentication would need to be implemented at the application level
+# or using AWS Cognito/OAuth integration with ALB
+
 - name: Deploy Prometheus via Helm (kube-prometheus-stack)
   kubernetes.core.helm:
     name: prometheus
@@ -265,6 +269,11 @@
       - "AlertManager DNS URL: http://{{ alertmanager_dns_name | default('DNS not configured') }}"
       - "Storage: {{ prometheus_storage_size }} (Prometheus), {{ alertmanager_storage_size }} (AlertManager)"
       - "Retention: {{ prometheus_retention }}"
+      - ""
+      - "NOTE: Services are publicly accessible. For production, consider:"
+      - "- Using AWS Cognito for authentication"
+      - "- Implementing network-level restrictions"
+      - "- Using NGINX ingress controller with basic auth"
   tags: ['prometheus']
 
 - name: Verify Prometheus is ready
