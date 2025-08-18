@@ -51,7 +51,31 @@
         namespace: "{{ monitoring_namespace }}"
         state: absent
         wait: true
-        wait_timeout: 300
+        wait_timeout: 180
+      ignore_errors: true
+      register: prometheus_ingress_result
+      tags: ['prometheus']
+
+    - name: Force remove Prometheus ingress finalizers if deletion failed
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: prometheus-ingress
+        namespace: "{{ monitoring_namespace }}"
+        merge_type: merge
+        definition:
+          metadata:
+            finalizers: []
+      when: prometheus_ingress_result is failed
+      ignore_errors: true
+      register: prometheus_finalizer_result
+      tags: ['prometheus']
+
+    - name: Debug Prometheus ingress finalizer handling
+      debug:
+        msg:
+          - "Prometheus ingress deletion status: {{ 'SUCCESS' if prometheus_ingress_result is succeeded else 'FAILED - Finalizers removed' }}"
+      when: prometheus_ingress_result is defined
       tags: ['prometheus']
 
     - name: Remove AlertManager ingress (triggers ALB deletion)
@@ -62,7 +86,49 @@
         namespace: "{{ monitoring_namespace }}"
         state: absent
         wait: true
-        wait_timeout: 300
+        wait_timeout: 180
+      ignore_errors: true
+      register: alertmanager_ingress_result
+      tags: ['prometheus']
+
+    - name: Force remove AlertManager ingress finalizers if deletion failed
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: alertmanager-ingress
+        namespace: "{{ monitoring_namespace }}"
+        merge_type: merge
+        definition:
+          metadata:
+            finalizers: []
+      when: alertmanager_ingress_result is failed
+      ignore_errors: true
+      register: alertmanager_finalizer_result
+      tags: ['prometheus']
+
+    - name: Debug AlertManager ingress finalizer handling
+      debug:
+        msg:
+          - "AlertManager ingress deletion status: {{ 'SUCCESS' if alertmanager_ingress_result is succeeded else 'FAILED - Finalizers removed' }}"
+      when: alertmanager_ingress_result is defined
+      tags: ['prometheus']
+
+    - name: Delete Prometheus CNAME record from Route53
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_domain }}"
+        record: "{{ prometheus_dns_name }}"
+        type: CNAME
+      ignore_errors: true
+      tags: ['prometheus']
+
+    - name: Delete AlertManager CNAME record from Route53
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_domain }}"
+        record: "{{ alertmanager_dns_name }}"
+        type: CNAME
+      ignore_errors: true
       tags: ['prometheus']
 
     - name: Wait for Prometheus ALBs to be deleted
@@ -115,7 +181,40 @@
         namespace: "{{ monitoring_namespace }}"
         state: absent
         wait: true
-        wait_timeout: 300
+        wait_timeout: 180
+      ignore_errors: true
+      register: grafana_ingress_result
+      tags: ['grafana']
+
+    - name: Force remove Grafana ingress finalizers if deletion failed
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: grafana-ingress
+        namespace: "{{ monitoring_namespace }}"
+        merge_type: merge
+        definition:
+          metadata:
+            finalizers: []
+      when: grafana_ingress_result is failed
+      ignore_errors: true
+      register: grafana_finalizer_result
+      tags: ['grafana']
+
+    - name: Debug Grafana ingress finalizer handling
+      debug:
+        msg:
+          - "Grafana ingress deletion status: {{ 'SUCCESS' if grafana_ingress_result is succeeded else 'FAILED - Finalizers removed' }}"
+      when: grafana_ingress_result is defined
+      tags: ['grafana']
+
+    - name: Delete Grafana CNAME record from Route53
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_domain }}"
+        record: "{{ grafana_dns_name }}"
+        type: CNAME
+      ignore_errors: true
       tags: ['grafana']
 
     - name: Wait for Grafana ALB to be deleted

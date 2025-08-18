@@ -119,7 +119,7 @@
     grafana_alb_url: "{{ grafana_ingress.resources[0].status.loadBalancer.ingress[0].hostname }}"
   when: grafana_ingress.resources[0].status.loadBalancer.ingress is defined
 
-- name: Update Grafana CNAME record in Route53
+- name: Create Grafana CNAME record in Route53
   amazon.aws.route53:
     state: present
     zone: "{{ dns_domain }}"

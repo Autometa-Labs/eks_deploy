@@ -222,7 +222,7 @@
   when: alertmanager_ingress.resources[0].status.loadBalancer.ingress is defined
   tags: ['prometheus']
 
-- name: Update Prometheus CNAME record in Route53
+- name: Create Prometheus CNAME record in Route53
   amazon.aws.route53:
     state: present
     zone: "{{ dns_domain }}"
@@ -235,7 +235,7 @@
   when: prometheus_alb_url is defined
   tags: ['prometheus']
 
-- name: Update AlertManager CNAME record in Route53
+- name: Create AlertManager CNAME record in Route53
   amazon.aws.route53:
     state: present
     zone: "{{ dns_domain }}"
