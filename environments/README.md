@@ -41,6 +41,32 @@ environments/
 
 ## Quick Start
 
+### 🚀 One-Liner Commands (Complete Environment)
+
+**Deploy Everything (Infrastructure + Applications):**
+```bash
+# Dev environment - complete deployment
+cd environments/dev/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook site.yml
+
+# Staging environment - complete deployment  
+cd environments/staging/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook site.yml
+
+# Prod environment - complete deployment
+cd environments/prod/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook site.yml
+```
+
+**Destroy Everything (Applications + Infrastructure):**
+```bash
+# Dev environment - complete destruction
+cd environments/dev/app_deploy && ansible-playbook app_destroy.yml --tags all && cd ../infra_deploy && terraform destroy -auto-approve
+
+# Staging environment - complete destruction
+cd environments/staging/app_deploy && ansible-playbook app_destroy.yml --tags all && cd ../infra_deploy && terraform destroy -auto-approve
+
+# Prod environment - complete destruction  
+cd environments/prod/app_deploy && ansible-playbook app_destroy.yml --tags all && cd ../infra_deploy && terraform destroy -auto-approve
+```
+
 ### 1. Deploy Infrastructure (Terraform)
 
 ```bash
