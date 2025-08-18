@@ -46,13 +46,13 @@ environments/
 **Deploy Everything (Infrastructure + Applications):**
 ```bash
 # Dev environment - complete deployment
-cd environments/dev/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook site.yml
+cd environments/dev/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook app_deploy.yml
 
 # Staging environment - complete deployment  
-cd environments/staging/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook site.yml
+cd environments/staging/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook app_deploy.yml
 
 # Prod environment - complete deployment
-cd environments/prod/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook site.yml
+cd environments/prod/infra_deploy && terraform init && terraform apply -auto-approve && cd ../app_deploy && ansible-playbook app_deploy.yml
 ```
 
 **Destroy Everything (Applications + Infrastructure):**
@@ -94,15 +94,15 @@ terraform apply
 ```bash
 # Deploy dev applications
 cd environments/dev/app_deploy
-ansible-playbook site.yml
+ansible-playbook app_deploy.yml
 
 # Deploy staging applications
 cd environments/staging/app_deploy
-ansible-playbook site.yml
+ansible-playbook app_deploy.yml
 
 # Deploy prod applications
 cd environments/prod/app_deploy
-ansible-playbook site.yml
+ansible-playbook app_deploy.yml
 ```
 
 ## Environment Configuration
@@ -149,36 +149,36 @@ The `aws_discovery` role automatically finds:
 ### Deploy Specific Components
 ```bash
 # Deploy all components
-ansible-playbook site.yml --tags all
-ansible-playbook site.yml  # (same as --tags all)
+ansible-playbook app_deploy.yml --tags all
+ansible-playbook app_deploy.yml  # (same as --tags all)
 
 # Deploy only ALB controller
-ansible-playbook site.yml --tags alb
+ansible-playbook app_deploy.yml --tags alb
 
 # Deploy only storage components
-ansible-playbook site.yml --tags storage
+ansible-playbook app_deploy.yml --tags storage
 
 # Deploy only monitoring stack
-ansible-playbook site.yml --tags prometheus,grafana
+ansible-playbook app_deploy.yml --tags prometheus,grafana
 
 # Deploy only Prometheus
-ansible-playbook site.yml --tags prometheus
+ansible-playbook app_deploy.yml --tags prometheus
 
 # Deploy only Grafana
-ansible-playbook site.yml --tags grafana
+ansible-playbook app_deploy.yml --tags grafana
 ```
 
 ### Environment Management
 ```bash
 # Check what will be deployed
-ansible-playbook site.yml --check
+ansible-playbook app_deploy.yml --check
 
 # Run with verbose output
-ansible-playbook site.yml -v
+ansible-playbook app_deploy.yml -v
 
 # Deploy to specific environment
 cd environments/staging/app_deploy
-ansible-playbook site.yml
+ansible-playbook app_deploy.yml
 ```
 
 ## Destroying Applications
