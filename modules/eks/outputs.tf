@@ -21,3 +21,7 @@ output "oidc_provider_arn" {
 output "cluster_id" {
   value = aws_eks_cluster.eks_cluster.id
 }
+
+output "oidc_issuer_url" {
+  value = aws_eks_cluster.eks_cluster.identity[0].oidc[0].issuer
+}

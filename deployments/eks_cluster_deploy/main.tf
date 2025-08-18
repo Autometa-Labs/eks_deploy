@@ -90,14 +90,7 @@ data "http" "alb_policy" {
   url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.13.3/docs/install/iam_policy.json"
 }
 
-# OIDC provider for IRSA (requires cluster to exist; we create it AFTER the cluster is up)
-resource "aws_iam_openid_connect_provider" "eks" {
-  url             = "https://oidc.eks.${var.region[0]}.amazonaws.com/id/${module.eks_cluster.cluster_id}" # use your module output if available; else swap to data source post-wait (see null_resource below)
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da0ecd4e0c3"]
-
-  depends_on = [module.eks_cluster]
-}
+# Remove this duplicate OIDC provider - the EKS module already creates one
 
 # Assume-role policy for the controller SA
 data "aws_iam_policy_document" "alb_sa_assume" {
@@ -107,18 +100,18 @@ data "aws_iam_policy_document" "alb_sa_assume" {
 
     principals {
       type        = "Federated"
-      identifiers = ["arn:aws:iam::216026633254:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/9856A945C800BA16282CF558F8DED7CE"]
+      identifiers = [module.eks_cluster.oidc_provider_arn]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "oidc.eks.us-east-1.amazonaws.com/id/9856A945C800BA16282CF558F8DED7CE:sub"
+      variable = "${replace(module.eks_cluster.oidc_issuer_url, "https://", "")}:sub"
       values   = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "oidc.eks.us-east-1.amazonaws.com/id/9856A945C800BA16282CF558F8DED7CE:aud"
+      variable = "${replace(module.eks_cluster.oidc_issuer_url, "https://", "")}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
@@ -175,6 +168,17 @@ resource "null_resource" "install_alb_controller" {
     command = <<-EOT
       set -euo pipefail
 
+      # Clean up any existing ALBs from previous deployments
+      echo "Cleaning up any existing ALBs..."
+      aws elbv2 describe-load-balancers --region "${var.region[0]}" \
+        --query 'LoadBalancers[?contains(LoadBalancerName, `k8s-monitori-grafana`)].LoadBalancerArn' \
+        --output text | while read -r alb_arn; do
+        if [ ! -z "$alb_arn" ]; then
+          echo "Deleting existing ALB: $alb_arn"
+          aws elbv2 delete-load-balancer --load-balancer-arn "$alb_arn" --region "${var.region[0]}" || true
+        fi
+      done
+
       # Ensure cluster is active
       aws eks wait cluster-active --name "${module.eks_cluster.cluster_name}" --region "${var.region[0]}"
 
@@ -199,6 +203,29 @@ resource "null_resource" "install_alb_controller" {
         --set serviceAccount.name=aws-load-balancer-controller
     EOT
   }
+
+  # Cleanup ALBs when destroying
+  provisioner "local-exec" {
+    when    = destroy
+    interpreter = ["bash", "-c"]
+    command = <<-EOT
+      set -euo pipefail
+      echo "Cleaning up ALBs created by ingress controller..."
+      
+      # Delete all ALBs with k8s tags for this cluster
+      aws elbv2 describe-load-balancers --region "us-east-1" \
+        --query 'LoadBalancers[?contains(LoadBalancerName, `k8s-`)].LoadBalancerArn' \
+        --output text | while read -r alb_arn; do
+        if [ ! -z "$alb_arn" ]; then
+          echo "Deleting ALB: $alb_arn"
+          aws elbv2 delete-load-balancer --load-balancer-arn "$alb_arn" --region "us-east-1" || true
+        fi
+      done
+      
+      # Wait a bit for ALBs to be deleted
+      sleep 30
+    EOT
+  }
 }
 
 # ------------------------------
@@ -213,18 +240,18 @@ data "aws_iam_policy_document" "ebs_csi_sa_assume" {
 
     principals {
       type        = "Federated"
-      identifiers = ["arn:aws:iam::216026633254:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/9856A945C800BA16282CF558F8DED7CE"]
+      identifiers = [module.eks_cluster.oidc_provider_arn]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "oidc.eks.us-east-1.amazonaws.com/id/9856A945C800BA16282CF558F8DED7CE:sub"
+      variable = "${replace(module.eks_cluster.oidc_issuer_url, "https://", "")}:sub"
       values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "oidc.eks.us-east-1.amazonaws.com/id/9856A945C800BA16282CF558F8DED7CE:aud"
+      variable = "${replace(module.eks_cluster.oidc_issuer_url, "https://", "")}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
