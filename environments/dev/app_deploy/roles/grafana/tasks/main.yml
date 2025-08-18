@@ -48,26 +48,6 @@
               url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
               access: proxy
               isDefault: true
-              uid: prometheus
-              editable: true
-              jsonData:
-                httpMethod: POST
-                queryTimeout: 60s
-                timeInterval: 30s
-                prometheusType: Prometheus
-                cacheLevel: High
-                incrementalQuerying: true
-                incrementalQueryOverlapWindow: 10m
-                disableRecordingRules: false
-            - name: AlertManager
-              type: alertmanager
-              url: http://prometheus-kube-prometheus-alertmanager.monitoring.svc.cluster.local:9093
-              access: proxy
-              uid: alertmanager
-              editable: true
-              jsonData:
-                implementation: prometheus
-                handleGrafanaManagedAlerts: false
     state: present
     wait: true
     timeout: "10m0s"
