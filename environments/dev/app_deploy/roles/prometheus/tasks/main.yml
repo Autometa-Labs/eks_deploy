@@ -105,8 +105,12 @@
             memory: "512Mi"
             cpu: "200m"
     state: present
-    wait: true
-    timeout: "15m0s"
+    wait: false
+    timeout: "8m0s"
+  register: prometheus_helm_result
+  retries: 3
+  delay: 60
+  until: prometheus_helm_result is succeeded
   tags: ['prometheus']
 
 - name: Wait for Prometheus pods to be ready
@@ -172,6 +176,10 @@
           alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
           alb.ingress.kubernetes.io/healthy-threshold-count: '2'
           alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+          # Enable sticky sessions and proper handling of static assets
+          alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=86400
+          # Ensure proper content type handling for static assets
+          alb.ingress.kubernetes.io/load-balancer-attributes: routing.http2.enabled=true,idle_timeout.timeout_seconds=60
       spec:
         rules:
           - http:

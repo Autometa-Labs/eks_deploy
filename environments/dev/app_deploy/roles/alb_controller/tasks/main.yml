@@ -41,9 +41,21 @@
       serviceAccount:
         create: false
         name: aws-load-balancer-controller
+      replicaCount: 2
+      resources:
+        limits:
+          cpu: 200m
+          memory: 500Mi
+        requests:
+          cpu: 100m
+          memory: 200Mi
     state: present
-    wait: true
-    timeout: "10m0s"
+    wait: false
+    timeout: "5m0s"
+  register: helm_result
+  retries: 3
+  delay: 30
+  until: helm_result is succeeded
 
 - name: Wait for ALB controller deployment to be ready
   kubernetes.core.k8s_info:
