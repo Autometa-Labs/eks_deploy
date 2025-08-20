@@ -80,10 +80,11 @@ Grafana                     | 10Gi        | ✅ Persistent
 4. **Alert Rules**: Configure AlertManager rules for operational monitoring
 
 ### Short-term Enhancements
-1. **Authentication**: Implement OAuth or basic auth for monitoring services
-2. **SSL/TLS**: Add HTTPS support for external services
-3. **Backup Procedures**: Implement backup strategies for persistent data
-4. **Resource Optimization**: Fine-tune resource allocation and limits
+1. **Cost Optimization**: Implement identified cost reduction strategies (~$224/month savings potential)
+2. **Authentication**: Implement OAuth or basic auth for monitoring services
+3. **SSL/TLS**: Add HTTPS support for external services
+4. **Backup Procedures**: Implement backup strategies for persistent data
+5. **Resource Optimization**: Fine-tune resource allocation and limits
 
 ### Medium-term Improvements
 1. **Multi-Environment Deployment**: Deploy staging and production environments
@@ -180,10 +181,20 @@ Grafana                     | 10Gi        | ✅ Persistent
 4. **Alert Configuration**: Set up basic operational alerts
 
 ### Medium Priority
-1. **Security Enhancement**: Implement authentication for monitoring services
-2. **SSL Configuration**: Add HTTPS support for external endpoints
-3. **Backup Strategy**: Plan and implement data backup procedures
-4. **Resource Optimization**: Review and optimize resource allocation
+1. **Cost Optimization Implementation**: 
+   - ALB consolidation (save $32/month)
+   - Dev environment scheduling (save $130/month)
+   - Storage optimization (save $6/month)
+2. **Security Enhancement**: Implement authentication for monitoring services
+3. **SSL Configuration**: Add HTTPS support for external endpoints
+4. **Backup Strategy**: Plan and implement data backup procedures
+5. **Resource Optimization**: Review and optimize resource allocation
+
+### Cost Optimization Roadmap
+1. **Phase 1 (Immediate)**: ALB consolidation + Dev scheduling = $162/month savings
+2. **Phase 2 (Short-term)**: Storage optimization = $6/month additional savings  
+3. **Phase 3 (Medium-term)**: Spot instances + rightsizing = $56/month additional savings
+4. **Total Potential**: $224/month savings (reduce from $218 to $94/month)
 
 ### Documentation Updates
 1. **Usage Examples**: Add more practical examples to README

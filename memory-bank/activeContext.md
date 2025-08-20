@@ -29,10 +29,10 @@
 4. **Alert Configuration**: Set up AlertManager rules for operational alerts
 
 ### Future Enhancements
-1. **Security Hardening**: Implement authentication for monitoring services
-2. **Backup Strategy**: Add backup procedures for persistent data
-3. **Scaling Configuration**: Optimize resource allocation and scaling policies
-4. **Cost Optimization**: Implement cost monitoring and optimization strategies
+1. **Cost Optimization**: Implement identified cost reduction strategies (Priority: High)
+2. **Security Hardening**: Implement authentication for monitoring services
+3. **Backup Strategy**: Add backup procedures for persistent data
+4. **Scaling Configuration**: Optimize resource allocation and scaling policies
 
 ## Active Decisions and Considerations
 
@@ -164,6 +164,45 @@ cd app_deploy && ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.y
 3. **Dashboard Standardization**: Common dashboard patterns for applications
 4. **Alert Rule Management**: Effective alerting without noise
 
+## Cost Optimization Analysis
+
+### Current Monthly Costs (Dev Environment)
+- **Total Estimated Cost**: ~$218/month
+- **Breakdown**:
+  - EKS Control Plane: ~$73/month
+  - Worker Nodes (2 × t3.medium): ~$60/month
+  - EBS Volumes: ~$14/month
+  - Application Load Balancers (3): ~$54/month
+  - Route53 & Other: ~$17/month
+
+### Identified Cost Savings Opportunities
+1. **ALB Consolidation**: Save ~$32/month (High Priority, Low Risk)
+   - Consolidate 3 ALBs into 1 with path-based routing
+   - Implementation: Modify ingress configurations
+   
+2. **Storage Optimization**: Save ~$6/month (Medium Priority, Low Risk)
+   - Reduce retention periods: Loki (30d→14d), Prometheus (15d→7d)
+   - Smaller volume sizes for dev environment
+   
+3. **Spot Instances**: Save ~$36/month (Medium Priority, Medium Risk)
+   - Use mixed instance types with Spot instances
+   - Requires testing for interruption handling
+   
+4. **Dev Environment Scheduling**: Save ~$130/month (High Priority, Low Risk)
+   - Auto-shutdown during nights/weekends
+   - Best for development environments only
+   
+5. **Instance Rightsizing**: Save ~$20/month (Low Priority, Medium Risk)
+   - Downsize to t3.small for dev environment
+   - Requires resource usage monitoring first
+
+### **Total Potential Savings**: ~$224/month (Optimized cost: ~$94/month)
+
+### Implementation Priority
+1. **Immediate**: ALB consolidation + Dev scheduling = $162/month savings
+2. **Short-term**: Storage optimization = $6/month additional savings
+3. **Medium-term**: Spot instances + rightsizing = $56/month additional savings
+
 ## Environment-Specific Notes
 
 ### Dev Environment
@@ -172,9 +211,11 @@ cd app_deploy && ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.y
 - **Region**: us-east-1
 - **DNS**: collectalot.io domain
 - **Access**: All monitoring services accessible via DNS
+- **Monthly Cost**: ~$218 (optimization potential: ~$224 savings)
 
 ### Staging/Prod Environments
 - **Status**: Ready for deployment
 - **Configuration**: Identical structure to dev
 - **Variables**: Environment-specific variable files prepared
 - **Deployment**: Same one-liner commands apply
+- **Estimated Costs**: Staging ~$200/month, Production ~$400/month
