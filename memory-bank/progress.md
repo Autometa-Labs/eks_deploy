@@ -191,10 +191,20 @@ Grafana                     | 10Gi        | ✅ Persistent
 5. **Resource Optimization**: Review and optimize resource allocation
 
 ### Cost Optimization Roadmap
-1. **Phase 1 (Immediate)**: ALB consolidation + Dev scheduling = $162/month savings
-2. **Phase 2 (Short-term)**: Storage optimization = $6/month additional savings  
-3. **Phase 3 (Medium-term)**: Spot instances + rightsizing = $56/month additional savings
-4. **Total Potential**: $224/month savings (reduce from $218 to $94/month)
+**Current Cost**: $218/month
+
+**Optimization Scenarios**:
+1. **Always-On Optimizations**: $218 → $124/month ($94 savings)
+   - ALB consolidation: $32/month
+   - Storage optimization: $6/month  
+   - Spot instances: $36/month
+   - Instance rightsizing: $20/month
+
+2. **Dev Environment Scheduling**: $218 → $88/month ($130 savings)
+   - Auto-shutdown nights/weekends (60% uptime reduction)
+
+3. **Best Case Combined**: $218 → $53/month ($165 total savings)
+   - Scheduling + all optimizations
 
 ### Documentation Updates
 1. **Usage Examples**: Add more practical examples to README

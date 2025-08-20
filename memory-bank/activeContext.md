@@ -189,19 +189,23 @@ cd app_deploy && ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.y
    - Requires testing for interruption handling
    
 4. **Dev Environment Scheduling**: Save ~$130/month (High Priority, Low Risk)
-   - Auto-shutdown during nights/weekends
+   - Auto-shutdown during nights/weekends (60% uptime reduction)
+   - Reduces total infrastructure costs from $218 to ~$88/month
    - Best for development environments only
    
 5. **Instance Rightsizing**: Save ~$20/month (Low Priority, Medium Risk)
    - Downsize to t3.small for dev environment
    - Requires resource usage monitoring first
 
-### **Total Potential Savings**: ~$224/month (Optimized cost: ~$94/month)
+### **Cost Optimization Scenarios**:
+- **Without Scheduling**: $218 → $124/month (ALB + Storage + Spot + Rightsizing = $94 savings)
+- **With Scheduling**: $218 → $88/month (60% reduction via auto-shutdown)
+- **Best Case**: $218 → $53/month (Scheduling + all optimizations)
 
 ### Implementation Priority
-1. **Immediate**: ALB consolidation + Dev scheduling = $162/month savings
-2. **Short-term**: Storage optimization = $6/month additional savings
-3. **Medium-term**: Spot instances + rightsizing = $56/month additional savings
+1. **Highest Impact**: Dev environment scheduling = $130/month savings (60% reduction)
+2. **Always-On Optimizations**: ALB + Storage + Spot + Rightsizing = $94/month savings
+3. **Combined Approach**: Scheduling + optimizations = $165/month total savings
 
 ## Environment-Specific Notes
 
@@ -211,7 +215,7 @@ cd app_deploy && ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.y
 - **Region**: us-east-1
 - **DNS**: collectalot.io domain
 - **Access**: All monitoring services accessible via DNS
-- **Monthly Cost**: ~$218 (optimization potential: ~$224 savings)
+- **Monthly Cost**: ~$218 (optimization potential: up to $165 savings)
 
 ### Staging/Prod Environments
 - **Status**: Ready for deployment
