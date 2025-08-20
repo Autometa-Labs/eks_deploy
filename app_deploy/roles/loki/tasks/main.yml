@@ -1,0 +1,239 @@
+---
+# =============================================
+# Loki Deployment Role
+# Deploys Loki stack with Promtail for log aggregation
+# Optimized for pt-app-dev structured JSON logs
+# =============================================
+
+- name: Add Grafana Helm repository for Loki
+  kubernetes.core.helm_repository:
+    name: "{{ grafana_repo_name }}"
+    repo_url: "{{ grafana_repo_url }}"
+  tags: ['loki']
+
+- name: Update Helm repositories
+  kubernetes.core.helm:
+    name: dummy
+    chart_ref: dummy
+    release_namespace: dummy
+    state: absent
+    update_repo_cache: true
+  tags: ['loki']
+
+- name: Deploy Loki Stack via Helm
+  kubernetes.core.helm:
+    name: loki
+    chart_ref: "{{ grafana_repo_name }}/loki-stack"
+    release_namespace: "{{ monitoring_namespace }}"
+    create_namespace: true
+    values:
+      # Loki configuration - simplified for reliability
+      loki:
+        enabled: true
+        persistence:
+          enabled: true
+          storageClassName: "{{ storage_class }}"
+          size: "{{ loki_storage_size }}"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        service:
+          type: ClusterIP
+          port: 3100
+
+      # Promtail configuration for log collection
+      promtail:
+        enabled: true
+        config:
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+          positions:
+            filename: /tmp/positions.yaml
+          clients:
+            - url: http://loki:3100/loki/api/v1/push
+          scrape_configs:
+            # Kubernetes pods scraping with JSON parsing for pt-app-dev
+            - job_name: kubernetes-pods
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: true
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod_name
+                - source_labels: [__meta_kubernetes_pod_label_job_name]
+                  target_label: job_name
+                - source_labels: [__meta_kubernetes_pod_container_name]
+                  target_label: container_name
+              pipeline_stages:
+                # JSON parsing for structured logs (pt-app-dev)
+                - json:
+                    expressions:
+                      level: level
+                      logger: logger
+                      msg: msg
+                      run_id: run_id
+                      game: game
+                      product_id: product_id
+                      timestamp: timestamp
+                # Extract labels from JSON fields
+                - labels:
+                    level:
+                    logger:
+                    game:
+                # Timestamp parsing
+                - timestamp:
+                    source: timestamp
+                    format: RFC3339
+                    fallback_formats:
+                      - "2006-01-02T15:04:05.000Z"
+                      - "2006-01-02 15:04:05"
+            
+            # Specific configuration for pt-app-dev namespace
+            - job_name: pt-app-dev
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces:
+                    names:
+                      - "{{ pt_app_namespace }}"
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod_name
+                - source_labels: [__meta_kubernetes_pod_label_job_name]
+                  target_label: job_name
+                - target_label: app
+                  replacement: pt-app-dev
+              pipeline_stages:
+                # Enhanced JSON parsing for pt-app-dev
+                - json:
+                    expressions:
+                      level: level
+                      logger: logger
+                      msg: msg
+                      run_id: run_id
+                      game: game
+                      product_id: product_id
+                      timestamp: timestamp
+                      pod_name: pod_name
+                      job_name: job_name
+                - labels:
+                    level:
+                    logger:
+                    game:
+                    run_id:
+                    app:
+                - timestamp:
+                    source: timestamp
+                    format: RFC3339
+                    fallback_formats:
+                      - "2006-01-02T15:04:05.000Z"
+                      - "2006-01-02 15:04:05"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+      # Grafana integration (disable since we have separate Grafana)
+      grafana:
+        enabled: false
+
+      # Fluent Bit (disable since we're using Promtail)
+      fluent-bit:
+        enabled: false
+
+    state: present
+    wait: false
+    timeout: "8m0s"
+  register: loki_helm_result
+  retries: 3
+  delay: 60
+  until: loki_helm_result is succeeded
+  tags: ['loki']
+
+- name: Wait for Loki pods to be ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ monitoring_namespace }}"
+    label_selectors:
+      - app=loki
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 300
+  tags: ['loki']
+
+# Loki is kept as internal service only - no external ALB needed
+# Grafana accesses Loki internally via: http://loki.monitoring.svc.cluster.local:3100
+# This is more secure and follows best practices for log aggregation services
+
+- name: Verify Loki pods are running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ monitoring_namespace }}"
+    label_selectors:
+      - app=loki
+  register: loki_pods
+  tags: ['loki']
+
+- name: Verify Promtail pods are running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ monitoring_namespace }}"
+    label_selectors:
+      - app=promtail
+  register: promtail_pods
+  tags: ['loki']
+
+- name: Display Loki deployment status
+  debug:
+    msg:
+      - "Loki Stack deployed successfully!"
+      - "Loki pods running: {{ loki_pods.resources | length }}"
+      - "Promtail pods running: {{ promtail_pods.resources | length }}"
+      - "Loki Internal URL: http://loki.{{ monitoring_namespace }}.svc.cluster.local:3100"
+      - "Storage: {{ loki_storage_size }} persistent storage"
+      - "Retention: {{ loki_retention }}"
+      - ""
+      - "IMPORTANT: Loki is INTERNAL-ONLY (no external access)!"
+      - "- Loki is an API-only service for log storage and querying"
+      - "- No ALB/external ingress for security best practices"
+      - "- Grafana accesses Loki internally within the cluster"
+      - "- Use Grafana Explore to visualize and query logs"
+      - ""
+      - "Log Collection Configuration:"
+      - "- pt-app-dev namespace: {{ pt_app_namespace }}"
+      - "- pt-app-dev job: {{ pt_app_job_name }}"
+      - "- JSON parsing enabled for structured logs"
+      - "- Labels extracted: level, logger, game, run_id"
+      - ""
+      - "Access logs via Grafana Explore:"
+      - "1. Go to Grafana → Explore"
+      - "2. Select 'Loki' as data source"
+      - "3. Use these LogQL queries:"
+      - "   - All pt-app-dev logs: {namespace=\"{{ pt_app_namespace }}\"}"
+      - "   - Error logs: {namespace=\"{{ pt_app_namespace }}\"} | json | level=\"ERROR\""
+      - "   - Game-specific: {namespace=\"{{ pt_app_namespace }}\"} | json | game=\"Pokemon\""
+      - "   - Job progress: {namespace=\"{{ pt_app_namespace }}\"} | json | logger=\"src.pricing_ingestion_service\""
+  tags: ['loki']
+
+- name: Verify Loki is ready
+  fail:
+    msg: "Loki pods are not running properly"
+  when: loki_pods.resources | length == 0
+  tags: ['loki']

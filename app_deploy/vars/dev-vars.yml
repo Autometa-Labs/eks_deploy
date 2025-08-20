@@ -1,0 +1,59 @@
+# =============================================
+# DEV Environment Configuration for Ansible
+# =============================================
+env_name: "dev"
+cluster_name: "dev-app-api-cl01"
+aws_region: "us-east-1"
+
+# Kubernetes namespaces
+monitoring_namespace: "monitoring"
+kube_system_namespace: "kube-system"
+
+# Helm repositories
+grafana_repo_name: "grafana"
+grafana_repo_url: "https://grafana.github.io/helm-charts"
+eks_repo_name: "eks"
+eks_repo_url: "https://aws.github.io/eks-charts"
+prometheus_repo_name: "prometheus-community"
+prometheus_repo_url: "https://prometheus-community.github.io/helm-charts"
+
+# Application versions
+alb_controller_version: "v2.13.3"
+ebs_csi_driver_version: "latest"
+grafana_version: "latest"
+prometheus_version: "latest"
+loki_version: "latest"
+
+# Storage configuration
+storage_class: "gp3"
+grafana_storage_size: "10Gi"
+prometheus_storage_size: "50Gi"
+alertmanager_storage_size: "10Gi"
+loki_storage_size: "50Gi"
+
+# Grafana configuration
+grafana_admin_password: "admin123"
+
+# Prometheus configuration
+prometheus_retention: "15d"
+prometheus_retention_size: "45GB"
+prometheus_admin_user: "admin"
+prometheus_admin_password: "prometheus123"
+alertmanager_admin_user: "admin"
+alertmanager_admin_password: "alertmanager123"
+
+# Loki configuration
+loki_retention: "30d"
+loki_admin_password: "loki123"
+
+# DNS configuration
+dns_zone_id: "Z02467093QT0UOKUO4CKO"
+dns_domain: "collectalot.io"
+grafana_dns_name: "grafana.collectalot.io"
+prometheus_dns_name: "prometheus.collectalot.io"
+alertmanager_dns_name: "alertmanager.collectalot.io"
+loki_dns_name: "loki.collectalot.io"
+
+# pt-app-dev specific configuration for log collection
+pt_app_namespace: "pt-app-dev"
+pt_app_job_name: "pt-app-dev-pokemon"

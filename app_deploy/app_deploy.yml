@@ -1,0 +1,86 @@
+---
+# =============================================
+# Consolidated Ansible Playbook for Application Deployment
+# Deploys ALB Controller, EBS CSI Driver, Loki, Prometheus, and Grafana
+# Uses environment-specific variable files
+# =============================================
+
+- name: Deploy Kubernetes Applications to EKS Cluster
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  
+  roles:
+    # Step 1: Discover AWS resources using cluster name
+    - role: aws_discovery
+      tags: ['discovery', 'always']
+    
+    # Step 2: Deploy AWS Load Balancer Controller
+    - role: alb_controller
+      tags: ['alb', 'controllers', 'all']
+    
+    # Step 3: Deploy EBS CSI Driver
+    - role: ebs_csi_driver
+      tags: ['ebs', 'storage', 'controllers', 'all']
+    
+    # Step 4: Deploy Loki for log aggregation (before Grafana)
+    - role: loki
+      tags: ['loki', 'logging', 'monitoring', 'all']
+    
+    # Step 5: Deploy Prometheus monitoring stack
+    - role: prometheus
+      tags: ['prometheus', 'monitoring', 'all']
+    
+    # Step 6: Deploy Grafana with Prometheus and Loki data sources
+    - role: grafana
+      tags: ['grafana', 'monitoring', 'all']
+
+  post_tasks:
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== Deployment Complete ==="
+          - "Environment: {{ env_name }}"
+          - "Cluster: {{ cluster_name }}"
+          - "Region: {{ aws_region }}"
+          - ""
+          - "Deployed Components:"
+          - "✓ AWS Load Balancer Controller"
+          - "✓ EBS CSI Driver with {{ storage_class }} storage class"
+          - "✓ Loki Stack with {{ loki_storage_size }} persistent storage"
+          - "✓ Prometheus Stack with {{ prometheus_storage_size }} persistent storage"
+          - "✓ Grafana with {{ grafana_storage_size }} persistent storage"
+          - ""
+          - "Access URLs:"
+          - "📊 Grafana: http://{{ grafana_dns_name | default('grafana.collectalot.io') }}"
+          - "📈 Prometheus: http://{{ prometheus_dns_name | default('prometheus.collectalot.io') }}"
+          - "🚨 AlertManager: http://{{ alertmanager_dns_name | default('alertmanager.collectalot.io') }}"
+          - "📋 Loki: http://{{ loki_dns_name | default('loki.collectalot.io') }}"
+          - ""
+          - "Grafana Login: admin / {{ grafana_admin_password }}"
+          - "Data Sources: Prometheus (metrics) + Loki (logs)"
+          - ""
+          - "pt-app-dev Log Collection:"
+          - "🔍 Namespace: {{ pt_app_namespace }}"
+          - "🏷️  Job: {{ pt_app_job_name }}"
+          - "📝 JSON parsing enabled for structured logs"
+          - ""
+          - "Useful LogQL Queries:"
+          - "• All pt-app-dev logs: {namespace=\"{{ pt_app_namespace }}\"}"
+          - "• Error logs: {namespace=\"{{ pt_app_namespace }}\"} | json | level=\"ERROR\""
+          - "• Game-specific: {namespace=\"{{ pt_app_namespace }}\"} | json | game=\"Pokemon\""
+          - ""
+          - "Next Steps:"
+          - "1. Check ALB provisioning: kubectl get ingress -n {{ monitoring_namespace }}"
+          - "2. Access Grafana and verify both Prometheus and Loki data sources"
+          - "3. Test log queries in Grafana's Explore section"
+          - "4. Monitor pt-app-dev logs for structured JSON parsing"
+
+  vars:
+    # Default values - override with environment-specific files
+    env_name: "unknown"
+    cluster_name: "unknown"
+    aws_region: "us-east-1"
+    monitoring_namespace: "monitoring"
+    pt_app_namespace: "price-tracker"
+    pt_app_job_name: "collectalot-pricing-tracker-pokemon"

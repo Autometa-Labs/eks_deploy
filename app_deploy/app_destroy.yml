@@ -1,0 +1,409 @@
+---
+# =============================================
+# Consolidated Ansible Playbook for Application Destruction
+# Destroys Grafana, Loki, Prometheus, ALB Controller, and EBS CSI Driver
+# Uses environment-specific variable files
+# =============================================
+
+- name: Destroy Kubernetes Applications from EKS Cluster
+  hosts: localhost
+  gather_facts: true
+  connection: local
+
+  tasks:
+    - name: Display destruction warning
+      debug:
+        msg:
+          - '⚠️  WARNING: This will destroy selected applications in {{ env_name | default("UNKNOWN") }} environment'
+          - 'Cluster: {{ cluster_name | default("UNKNOWN") }}'
+          - 'Region: {{ aws_region | default("us-east-1") }}'
+          - ''
+          - 'Available tags for selective destruction:'
+          - '- loki: Loki logging stack'
+          - '- prometheus: Prometheus monitoring stack'
+          - '- grafana: Grafana monitoring stack'
+          - '- alb: AWS Load Balancer Controller'
+          - '- storage: EBS CSI Driver and storage classes'
+          - '- all: All applications and resources'
+          - ''
+          - 'Usage examples:'
+          - 'ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.yml" --tags grafana'
+          - 'ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.yml" --tags loki,prometheus'
+          - 'ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.yml" --tags all'
+          - 'ansible-playbook app_destroy.yml --extra-vars "@vars/dev-vars.yml" (destroys everything)'
+
+    - name: Update kubeconfig for cluster
+      shell: aws eks update-kubeconfig --region {{ aws_region }} --name {{ cluster_name }}
+      changed_when: true
+
+    # Loki Stack Destruction (Internal-only, no ALB/ingress to remove)
+
+    - name: Uninstall Loki Stack Helm release
+      kubernetes.core.helm:
+        name: loki
+        release_namespace: "{{ monitoring_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300s
+      ignore_errors: true
+      tags: ['loki', 'all']
+
+    - name: Remove Loki PVCs (this will delete the EBS volumes)
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+        label_selectors:
+          - app=loki
+        state: absent
+      tags: ['loki', 'all']
+
+    - name: Wait for Loki PVC deletion
+      pause:
+        seconds: 30
+        prompt: "Waiting for Loki PVCs and EBS volumes to be deleted..."
+      tags: ['loki', 'all']
+
+    # Prometheus Stack Destruction
+    - name: Remove Prometheus ingress (triggers ALB deletion)
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: prometheus-ingress
+        namespace: "{{ monitoring_namespace }}"
+        state: absent
+      register: prometheus_ingress_result
+      failed_when: false
+      tags: ['prometheus', 'all']
+
+    - name: Force remove Prometheus ingress finalizers if deletion failed
+      shell: |
+        kubectl patch ingress prometheus-ingress -n {{ monitoring_namespace }} -p '{"metadata":{"finalizers":[]}}' --type=merge
+      when: prometheus_ingress_result.failed | default(false)
+      failed_when: false
+      tags: ['prometheus', 'all']
+
+    - name: Debug Prometheus ingress finalizer handling
+      debug:
+        msg:
+          - 'Prometheus ingress deletion status: {{ "SUCCESS" if not (prometheus_ingress_result.failed | default(false)) else "FAILED - Finalizers removed" }}'
+      tags: ['prometheus', 'all']
+
+    - name: Remove AlertManager ingress (triggers ALB deletion)
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: alertmanager-ingress
+        namespace: "{{ monitoring_namespace }}"
+        state: absent
+      register: alertmanager_ingress_result
+      failed_when: false
+      tags: ['prometheus', 'all']
+
+    - name: Force remove AlertManager ingress finalizers if deletion failed
+      shell: |
+        kubectl patch ingress alertmanager-ingress -n {{ monitoring_namespace }} -p '{"metadata":{"finalizers":[]}}' --type=merge
+      when: alertmanager_ingress_result.failed | default(false)
+      failed_when: false
+      tags: ['prometheus', 'all']
+
+    - name: Debug AlertManager ingress finalizer handling
+      debug:
+        msg:
+          - 'AlertManager ingress deletion status: {{ "SUCCESS" if not (alertmanager_ingress_result.failed | default(false)) else "FAILED - Finalizers removed" }}'
+      tags: ['prometheus', 'all']
+
+    - name: Delete Prometheus CNAME record from Route53
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_domain }}"
+        record: "{{ prometheus_dns_name }}"
+        type: CNAME
+      ignore_errors: true
+      tags: ['prometheus', 'all']
+
+    - name: Delete AlertManager CNAME record from Route53
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_domain }}"
+        record: "{{ alertmanager_dns_name }}"
+        type: CNAME
+      ignore_errors: true
+      tags: ['prometheus', 'all']
+
+    - name: Wait for Prometheus ALBs to be deleted
+      pause:
+        seconds: 60
+        prompt: "Waiting for Prometheus and AlertManager ALBs to be deleted..."
+      tags: ['prometheus', 'all']
+
+    - name: Uninstall Prometheus Stack Helm release
+      kubernetes.core.helm:
+        name: prometheus
+        release_namespace: "{{ monitoring_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300s
+      ignore_errors: true
+      tags: ['prometheus', 'all']
+
+    - name: Remove Prometheus PVCs (this will delete the EBS volumes)
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+        label_selectors:
+          - app.kubernetes.io/name=prometheus
+        state: absent
+      tags: ['prometheus', 'all']
+
+    - name: Remove AlertManager PVCs (this will delete the EBS volumes)
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+        label_selectors:
+          - app.kubernetes.io/name=alertmanager
+        state: absent
+      tags: ['prometheus', 'all']
+
+    - name: Wait for Prometheus PVC deletion
+      pause:
+        seconds: 30
+        prompt: "Waiting for Prometheus and AlertManager PVCs and EBS volumes to be deleted..."
+      tags: ['prometheus', 'all']
+
+    # Grafana Destruction
+    - name: Remove Grafana ingress (triggers ALB deletion)
+      kubernetes.core.k8s:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: grafana-ingress
+        namespace: "{{ monitoring_namespace }}"
+        state: absent
+      register: grafana_ingress_result
+      failed_when: false
+      tags: ['grafana', 'all']
+
+    - name: Force remove Grafana ingress finalizers if deletion failed
+      shell: |
+        kubectl patch ingress grafana-ingress -n {{ monitoring_namespace }} -p '{"metadata":{"finalizers":[]}}' --type=merge
+      when: grafana_ingress_result.failed | default(false)
+      failed_when: false
+      tags: ['grafana', 'all']
+
+    - name: Debug Grafana ingress finalizer handling
+      debug:
+        msg:
+          - 'Grafana ingress deletion status: {{ "SUCCESS" if not (grafana_ingress_result.failed | default(false)) else "FAILED - Finalizers removed" }}'
+      tags: ['grafana', 'all']
+
+    - name: Delete Grafana CNAME record from Route53
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_domain }}"
+        record: "{{ grafana_dns_name }}"
+        type: CNAME
+      ignore_errors: true
+      tags: ['grafana', 'all']
+
+    - name: Wait for Grafana ALB to be deleted
+      pause:
+        seconds: 60
+        prompt: "Waiting for Grafana ALB to be deleted..."
+      tags: ['grafana', 'all']
+
+    - name: Uninstall Grafana Helm release
+      kubernetes.core.helm:
+        name: grafana
+        release_namespace: "{{ monitoring_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300s
+      ignore_errors: true
+      tags: ['grafana', 'all']
+
+    - name: Remove Grafana PVC (this will delete the EBS volume)
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+        label_selectors:
+          - app.kubernetes.io/name=grafana
+        state: absent
+      tags: ['grafana', 'all']
+
+    - name: Wait for Grafana PVC deletion
+      pause:
+        seconds: 30
+        prompt: "Waiting for Grafana PVC and EBS volumes to be deleted..."
+      tags: ['grafana', 'all']
+
+    # ALB Controller Destruction
+    - name: Clean up ALB target groups before removing controller
+      shell: |
+        aws elbv2 describe-target-groups --region {{ aws_region }} --query 'TargetGroups[?contains(TargetGroupName, `k8s-`) && contains(TargetGroupName, `{{ cluster_name | replace("-", "") }}`)].[TargetGroupArn]' --output text | xargs -r -n1 aws elbv2 delete-target-group --region {{ aws_region }} --target-group-arn
+      ignore_errors: true
+      tags: ['alb', 'all']
+
+    - name: Wait for target groups to be deleted
+      pause:
+        seconds: 30
+        prompt: "Waiting for ALB target groups to be deleted..."
+      tags: ['alb', 'all']
+
+    - name: Uninstall AWS Load Balancer Controller Helm release
+      kubernetes.core.helm:
+        name: aws-load-balancer-controller
+        release_namespace: "{{ kube_system_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 300s
+      ignore_errors: true
+      tags: ['alb', 'all']
+
+    - name: Remove ALB controller service account
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: ServiceAccount
+        name: aws-load-balancer-controller
+        namespace: "{{ kube_system_namespace }}"
+        state: absent
+      tags: ['alb', 'all']
+
+    # EBS CSI Driver Destruction
+    - name: Remove EBS CSI Driver add-on
+      shell: |
+        aws eks delete-addon --cluster-name {{ cluster_name }} --addon-name aws-ebs-csi-driver --region {{ aws_region }}
+      ignore_errors: true
+      tags: ['storage', 'all']
+
+    - name: Wait for EBS CSI Driver add-on deletion
+      shell: |
+        aws eks describe-addon --cluster-name {{ cluster_name }} --addon-name aws-ebs-csi-driver --region {{ aws_region }}
+      register: ebs_addon_status
+      until: ebs_addon_status.rc != 0
+      retries: 10
+      delay: 30
+      failed_when: false
+      tags: ['storage', 'all']
+
+    - name: Get all PVCs before cleanup
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ monitoring_namespace }}"
+      register: all_pvcs
+      tags: ['storage', 'all']
+
+    - name: Remove all PVCs to trigger EBS volume deletion
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ item.metadata.namespace }}"
+        state: absent
+      loop: "{{ all_pvcs.resources }}"
+      when: all_pvcs.resources | length > 0
+      tags: ['storage', 'all']
+
+    - name: Wait for PVC deletion to complete
+      pause:
+        seconds: 60
+        prompt: "Waiting for all PVCs and EBS volumes to be deleted..."
+      when: all_pvcs.resources | length > 0
+      tags: ['storage', 'all']
+
+    - name: Clean up orphaned EBS volumes
+      shell: |
+        aws ec2 describe-volumes --region {{ aws_region }} --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned" --query 'Volumes[?State==`available`].VolumeId' --output text | xargs -r -n1 aws ec2 delete-volume --region {{ aws_region }} --volume-id
+      ignore_errors: true
+      tags: ['storage', 'all']
+
+    - name: Remove custom storage class
+      kubernetes.core.k8s:
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: "{{ storage_class }}"
+        state: absent
+      ignore_errors: true
+      tags: ['storage', 'all']
+
+    # Final Cleanup
+    - name: Clean up any remaining ALBs created by ingress controller
+      shell: |
+        aws elbv2 describe-load-balancers --region {{ aws_region }} --query 'LoadBalancers[?contains(LoadBalancerName, `k8s-`) && contains(LoadBalancerName, `{{ cluster_name | replace("-", "") }}`)].[LoadBalancerArn]' --output text | xargs -r -n1 aws elbv2 delete-load-balancer --region {{ aws_region }} --load-balancer-arn
+      ignore_errors: true
+      tags: ['all']
+
+    - name: Check if monitoring namespace has any remaining resources
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ monitoring_namespace }}"
+      register: remaining_pods
+      tags: ['all']
+
+    - name: Remove monitoring namespace if empty
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ monitoring_namespace }}"
+        state: absent
+      when: remaining_pods.resources | length == 0
+      tags: ['all']
+
+    # Verification
+    - name: Verify Helm releases are removed
+      shell: helm list -A
+      register: remaining_releases
+      tags: ['all']
+
+    - name: Verify no ALBs remain
+      shell: aws elbv2 describe-load-balancers --region {{ aws_region }} --query 'LoadBalancers[?contains(LoadBalancerName, `k8s-`) && contains(LoadBalancerName, `{{ cluster_name | replace("-", "") }}`)].[LoadBalancerName]' --output text
+      register: remaining_albs
+      tags: ['all']
+
+    - name: Verify no target groups remain
+      shell: aws elbv2 describe-target-groups --region {{ aws_region }} --query 'TargetGroups[?contains(TargetGroupName, `k8s-`) && contains(TargetGroupName, `{{ cluster_name | replace("-", "") }}`)].[TargetGroupName]' --output text
+      register: remaining_target_groups
+      tags: ['all']
+
+    - name: Verify no orphaned EBS volumes remain
+      shell: aws ec2 describe-volumes --region {{ aws_region }} --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned" --query 'Volumes[?State==`available`].VolumeId' --output text
+      register: remaining_volumes
+      tags: ['all']
+
+    - name: Display destruction summary
+      debug:
+        msg:
+          - === Selective Destruction Complete ===
+          - 'Environment: {{ env_name | default("UNKNOWN") }}'
+          - 'Cluster: {{ cluster_name }}'
+          - 'Tags executed: {{ ansible_run_tags | join(", ") if ansible_run_tags is defined else "all" }}'
+          - ''
+          - 'Remaining Helm releases:'
+          - '{{ remaining_releases.stdout_lines }}'
+          - ''
+          - 'Remaining ALBs:'
+          - '{{ remaining_albs.stdout }}'
+          - ''
+          - 'Remaining Target Groups:'
+          - '{{ remaining_target_groups.stdout }}'
+          - ''
+          - 'Remaining EBS Volumes:'
+          - '{{ remaining_volumes.stdout }}'
+          - ''
+          - '⚠️  Note: Infrastructure (EKS cluster, IAM roles) remains intact'
+          - Use 'terraform destroy' in infra_deploy/ to remove infrastructure
+      tags: ['all']
+
+  vars:
+    # Default values - override with environment-specific files
+    env_name: "unknown"
+    cluster_name: "unknown"
+    aws_region: "us-east-1"
+    monitoring_namespace: "monitoring"
+    kube_system_namespace: "kube-system"
+    storage_class: "gp3"
+    dns_domain: "collectalot.io"
