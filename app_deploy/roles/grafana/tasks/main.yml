@@ -30,6 +30,8 @@
     chart_ref: "{{ grafana_repo_name }}/grafana"
     release_namespace: "{{ monitoring_namespace }}"
     values:
+      image:
+        tag: "9.5.15"  # Use older compatible Grafana version
       persistence:
         enabled: true
         size: "{{ grafana_storage_size }}"
@@ -52,8 +54,14 @@
               type: loki
               url: http://loki.monitoring.svc.cluster.local:3100
               access: proxy
+              uid: loki-datasource
+              editable: true
               jsonData:
                 maxLines: 1000
+                timeout: 30
+                httpHeaderName1: "X-Scope-OrgID"
+              secureJsonData:
+                httpHeaderValue1: "1"
     state: present
     wait: true
     timeout: "10m0s"
