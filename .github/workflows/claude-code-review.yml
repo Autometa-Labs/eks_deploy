@@ -1,0 +1,84 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "**/*.tf"
+      - "**/*.tfvars"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - "**/values*.yaml"
+      - "**/*.sh"
+      - "**/Dockerfile"
+      - "**/Makefile"
+      - "app_deploy/**"
+      - "infra_deploy/**"
+      - "modules/**"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Anthropic model to use"
+        required: false
+        default: "claude-3-5-haiku-20241022"
+      require_label:
+        description: "Require a label to run (true/false)"
+        required: false
+        default: "false"
+      label_name:
+        description: "Label name required when gating is enabled"
+        required: false
+        default: "ai-review"
+      pull_request_number:
+        description: "PR number to review when manually dispatched (optional; latest open PR if omitted)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: Run Claude code review
+    # Skip drafts unless manually dispatched
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install anthropic requests
+
+      - name: Run Claude code review
+        env:
+          # Auth
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Model and generation params
+          MODEL: ${{ github.event.inputs.model || 'claude-3-5-haiku-20241022' }}
+          MAX_TOKENS: "2000"
+          TEMPERATURE: "0"
+          # Optional label gating
+          REQUIRE_LABEL: ${{ github.event.inputs.require_label || 'false' }}
+          LABEL_NAME: ${{ github.event.inputs.label_name || 'ai-review' }}
+          # Manual dispatch targeting
+          PULL_REQUEST_NUMBER: ${{ github.event.inputs.pull_request_number || '' }}
+        run: |
+          python scripts/claude_code_review.py
