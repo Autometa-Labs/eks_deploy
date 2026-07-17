@@ -56,13 +56,34 @@ resource "null_resource" "eks_api_auth_mode" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      aws eks update-cluster-config \
+      CURRENT=$(aws eks describe-cluster \
+        --name ${module.eks_cluster.cluster_name} \
+        --region us-east-1 \
+        --query 'cluster.accessConfig.authenticationMode' \
+        --output text)
+      if [ "$CURRENT" = "API_AND_CONFIG_MAP" ] || [ "$CURRENT" = "API" ]; then
+        echo "Auth mode already $CURRENT, skipping update"
+        exit 0
+      fi
+      UPDATE_ID=$(aws eks update-cluster-config \
         --name ${module.eks_cluster.cluster_name} \
         --access-config authenticationMode=API_AND_CONFIG_MAP \
-        --region us-east-1
-      aws eks wait cluster-active \
-        --name ${module.eks_cluster.cluster_name} \
-        --region us-east-1
+        --region us-east-1 \
+        --query 'update.id' \
+        --output text)
+      echo "Waiting for auth mode update $UPDATE_ID..."
+      while true; do
+        STATUS=$(aws eks describe-update \
+          --name ${module.eks_cluster.cluster_name} \
+          --update-id "$UPDATE_ID" \
+          --region us-east-1 \
+          --query 'update.status' \
+          --output text)
+        echo "  status: $STATUS"
+        [ "$STATUS" = "Successful" ] && break
+        [ "$STATUS" = "Failed" ]     && exit 1
+        sleep 10
+      done
     EOT
   }
 
