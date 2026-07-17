@@ -1,0 +1,16 @@
+settings:
+  clusterName: dev-app-api-cl01
+  interruptionQueue: KarpenterInterruptionQueue-dev-app-api-cl01
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::216026633254:role/KarpenterControllerRole-dev-app-api-cl01
+
+controller:
+  resources:
+    requests:
+      cpu: 1
+      memory: 1Gi
+    limits:
+      cpu: 1
+      memory: 1Gi
