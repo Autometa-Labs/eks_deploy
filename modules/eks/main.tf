@@ -19,4 +19,8 @@ resource "aws_eks_cluster" "eks_cluster" {
     aws_iam_role_policy_attachment.eks_cluster_policy_att,
     aws_iam_role_policy_attachment.eks_resource_controller_att,
   ]
+
+  lifecycle {
+    ignore_changes = [access_config]
+  }
 }
