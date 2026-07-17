@@ -46,13 +46,36 @@ resource "aws_iam_instance_profile" "karpenter_node" {
   role = aws_iam_role.karpenter_node.name
 }
 
+# Switch auth mode to API_AND_CONFIG_MAP via CLI (local-exec) because adding
+# access_config to an existing cluster resource in Terraform forces replacement.
+# This local-exec runs in-place and is idempotent.
+resource "null_resource" "eks_api_auth_mode" {
+  triggers = {
+    cluster_id = module.eks_cluster.cluster_id
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws eks update-cluster-config \
+        --name ${module.eks_cluster.cluster_name} \
+        --access-config authenticationMode=API_AND_CONFIG_MAP \
+        --region us-east-1
+      aws eks wait cluster-active \
+        --name ${module.eks_cluster.cluster_name} \
+        --region us-east-1
+    EOT
+  }
+
+  depends_on = [module.eks_cluster]
+}
+
 # Allow Karpenter-launched nodes to join the cluster via EKS access entry
 resource "aws_eks_access_entry" "karpenter_node" {
   cluster_name  = module.eks_cluster.cluster_name
   principal_arn = aws_iam_role.karpenter_node.arn
   type          = "EC2_LINUX"
 
-  depends_on = [module.eks_cluster]
+  depends_on = [null_resource.eks_api_auth_mode]
 }
 
 # ── Controller IAM role (IRSA) ────────────────────────────────────────────────
