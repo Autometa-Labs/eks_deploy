@@ -21,7 +21,7 @@ provider "aws" {
 module "eks_cluster" {
   source                     = "../../modules/eks"
   cluster_name               = "${var.prefix}api-${var.cluster_prefix}"
-  iam_role_name              = "${var.prefix}cluster-role"
+  iam_role_name              = "${var.prefix}cluster-role-${var.cluster_prefix}"
   vpc_name                   = data.aws_vpc.vpc.id
   cluster_policy             = var.cluster_policy
   resource_controller_policy = var.resource_controller_policy
@@ -59,7 +59,7 @@ module "nodegroup" {
 # ------------------------------
 module "ecr_registry" {
   source            = "../../modules/ecr"
-  ecr_registry_name = "${var.prefix}dev"
+  ecr_registry_name = "${var.prefix}${var.cluster_prefix}"
 }
 
 # ------------------------------
@@ -121,7 +121,7 @@ resource "aws_iam_role" "alb_controller" {
 }
 
 resource "aws_iam_policy" "alb_controller" {
-  name   = "${var.prefix}AWSLoadBalancerControllerIAMPolicy"
+  name   = "${var.prefix}AWSLoadBalancerControllerIAMPolicy-${var.cluster_prefix}"
   policy = data.http.alb_policy.response_body
 }
 
